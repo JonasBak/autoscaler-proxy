@@ -53,15 +53,16 @@ type Autoscaler struct {
 
 	serverOpts hcloud.ServerCreateOpts
 
-	/// Used to "queue" a scaledown evaluation with EvaluateScaledown
+	// Used to "queue" a scaledown evaluation with EvaluateScaledown
 	scaledownDebounce *utils.Debouncer
-	/// Used to decide when it is time to scale down
+	// Used to decide when it is time to scale down
 	lastInteraction time.Time
-
-	// connections atomic.Int32
 
 	connectionTimeout time.Duration
 	scaledownAfter    time.Duration
+
+	cUp   chan chan error
+	cDown chan struct{}
 }
 
 func New() Autoscaler {
@@ -79,25 +80,27 @@ func New() Autoscaler {
 	// serverOpts := serverOptions(client, opts)
 
 	as := Autoscaler{
-		mx:     &sync.Mutex{},
+		mx:     new(sync.Mutex),
 		client: client,
 		// serverOpts: serverOpts,
 
 		lastInteraction: time.Now(),
 
-		// connections: atomic.Int32{},
 		connectionTimeout: opts.ConnectionTimeout,
 		scaledownAfter:    opts.ScaledownAfter,
+
+		cUp:   make(chan chan error),
+		cDown: make(chan struct{}),
 	}
 
 	as.scaledownDebounce = utils.NewDebouncer(5*time.Second, func() {
-		as.EvaluateScaledown()
+		as.cDown <- struct{}{}
 	})
 
 	return as
 }
 
-func (as Autoscaler) createServer() error {
+func (as *Autoscaler) createServer() error {
 	if as.server != nil {
 		return fmt.Errorf("Server already exists")
 	}
@@ -107,7 +110,7 @@ func (as Autoscaler) createServer() error {
 	return nil
 }
 
-func (as Autoscaler) deleteServer() error {
+func (as *Autoscaler) deleteServer() error {
 	// if as.server == nil {
 	// 	return nil
 	// }
@@ -121,7 +124,7 @@ func (as Autoscaler) deleteServer() error {
 // on the time since last (EnsureOnline) interaction with the autoscaler.
 // If it isn't time to scale down yet, the function will "re-queue" itself,
 // and check in later.
-func (as Autoscaler) EvaluateScaledown() error {
+func (as *Autoscaler) evaluateScaledown(ctx context.Context) {
 	log.Debug("Evaluating scaledown")
 	// if as.server == nil {
 	// 	return nil
@@ -134,15 +137,19 @@ func (as Autoscaler) EvaluateScaledown() error {
 
 	if timeSinceLastInteraction <= as.scaledownAfter {
 		as.scaledownDebounce.F()
-		return nil
+		return
 	}
 
-	return as.deleteServer()
+	as.deleteServer()
+}
+
+func (as *Autoscaler) EvaluateScaledown() {
+	as.scaledownDebounce.F()
 }
 
 // This function should be called before GetConnection to ensure that the
 // server is online before trying to connect to it, can be called many times.
-func (as Autoscaler) EnsureOnline(ctx context.Context) error {
+func (as *Autoscaler) ensureOnline(ctx context.Context) error {
 	log.Debug("Making sure server is online")
 	as.mx.Lock()
 	defer as.mx.Unlock()
@@ -162,7 +169,13 @@ func (as Autoscaler) EnsureOnline(ctx context.Context) error {
 	return nil
 }
 
-func (as Autoscaler) GetConnection(ctx context.Context) (io.ReadWriteCloser, error) {
+func (as *Autoscaler) EnsureOnline(ctx context.Context) error {
+	c := make(chan error)
+	as.cUp <- c
+	return <-c
+}
+
+func (as *Autoscaler) GetConnection(ctx context.Context) (io.ReadWriteCloser, error) {
 	conn, err := (&net.Dialer{}).DialContext(ctx, "tcp", "127.0.0.1:8082")
 	rwc, c := utils.NewReadWriteCloseNotifier(conn)
 
@@ -182,5 +195,22 @@ func (as Autoscaler) GetConnection(ctx context.Context) (io.ReadWriteCloser, err
 	return rwc, err
 }
 
-func (as Autoscaler) Shutdown() {
+func (as *Autoscaler) Start(ctx context.Context) {
+	log.Info("Starting autoscaler")
+LOOP:
+	for {
+		select {
+		case c := <-as.cUp:
+			c <- as.ensureOnline(ctx)
+			break
+		case <-as.cDown:
+			as.evaluateScaledown(ctx)
+			break
+		case <-ctx.Done():
+			break LOOP
+		}
+	}
+}
+
+func (as *Autoscaler) Shutdown() {
 }

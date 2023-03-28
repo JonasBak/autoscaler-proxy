@@ -84,6 +84,12 @@ func (p Proxy) Start(ctx context.Context) error {
 	p.wg.Add(1)
 	defer p.wg.Done()
 
+	p.wg.Add(1)
+	go func() {
+		p.as.Start(ctx)
+		defer p.wg.Done()
+	}()
+
 	l, err := (&net.ListenConfig{}).Listen(ctx, "tcp", p.listenAddr)
 	defer l.Close()
 
