@@ -5,6 +5,7 @@ go 1.20
 require (
 	github.com/hetznercloud/hcloud-go v1.41.0
 	github.com/sirupsen/logrus v1.9.0
+	golang.org/x/crypto v0.0.0-20200622213623-75b288015ac9
 )
 
 require (

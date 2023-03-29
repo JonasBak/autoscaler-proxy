@@ -17,7 +17,9 @@ var log = utils.Logger().WithField("pkg", "proxy")
 type Proxy struct {
 	as         as.Autoscaler
 	listenAddr string
-	wg         *sync.WaitGroup
+	// Used to keep track of ongoing connections, and wait for them to close when
+	// stopping the proxy.
+	wg *sync.WaitGroup
 }
 
 func New(addr string) Proxy {
@@ -28,6 +30,8 @@ func New(addr string) Proxy {
 	}
 }
 
+// Spawns a goroutine that accepts incoming connections, and sends them over the
+// channel returned by the function.
 func (p Proxy) acceptIncoming(l net.Listener, log *logrus.Entry) chan net.Conn {
 	newConns := make(chan net.Conn)
 
@@ -46,6 +50,8 @@ func (p Proxy) acceptIncoming(l net.Listener, log *logrus.Entry) chan net.Conn {
 	return newConns
 }
 
+// Takes an incoming connection, gets a connection from the autoscaler, and "connects"
+// the two.
 func (p Proxy) handleRequest(ctx context.Context, c net.Conn, log *logrus.Entry) {
 	log.Debug("Handling request")
 
@@ -77,17 +83,20 @@ func (p Proxy) handleRequest(ctx context.Context, c net.Conn, log *logrus.Entry)
 	log.Debug("Request handled")
 }
 
+// Blocking function that starts the autoscaler and listens and handles incoming requests.
 func (p Proxy) Start(ctx context.Context) error {
 	log := log.WithField("addr", p.listenAddr)
 	log.Info("Listen to incoming requests")
 
+	// Keep track of this "main" goroutine
 	p.wg.Add(1)
 	defer p.wg.Done()
 
+	// Keep track of the autoscaler
 	p.wg.Add(1)
 	go func() {
-		p.as.Start(ctx)
 		defer p.wg.Done()
+		p.as.Start(ctx)
 	}()
 
 	l, err := (&net.ListenConfig{}).Listen(ctx, "tcp", p.listenAddr)
@@ -111,6 +120,7 @@ LOOP:
 				continue LOOP
 			}
 
+			// Keep track of the goroutine that handles the connection
 			p.wg.Add(1)
 			go func() {
 				defer p.wg.Done()
@@ -125,6 +135,7 @@ LOOP:
 	return nil
 }
 
+// Try to gracefully stop the proxy and autoscaler.
 func (p Proxy) Stop() {
 	log.Debug("Stopping proxy...")
 

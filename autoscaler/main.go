@@ -10,6 +10,7 @@ import (
 
 	"github.com/JonasBak/docker-api-autoscaler-proxy/utils"
 	"github.com/hetznercloud/hcloud-go/hcloud"
+	_ "golang.org/x/crypto/ssh"
 )
 
 var log = utils.Logger().WithField("pkg", "autoscaler")
@@ -46,22 +47,29 @@ func serverOptions(client *hcloud.Client, opts AutoscalerOpts) hcloud.ServerCrea
 }
 
 type Autoscaler struct {
-	client *hcloud.Client
-
-	mx     *sync.Mutex
-	server *hcloud.Server
-
+	client     *hcloud.Client
+	mx         *sync.Mutex
+	server     *hcloud.Server
 	serverOpts hcloud.ServerCreateOpts
 
+	// Used to connect to the server after it has been created. Generates a private key for
+	// itself and creates a private key for the server. Both of these are created on Start().
+	// Note that this means that one instance of the autoscaler can't talk to servers created
+	// by other instances.
+	sshClient SSHClient
 	// Used to "queue" a scaledown evaluation with EvaluateScaledown
 	scaledownDebounce *utils.Debouncer
 	// Used to decide when it is time to scale down
 	lastInteraction time.Time
-
+	// The max length of time before a connection is forcefully closed. Used to avoid lingering
+	// connections keeping the server running.
 	connectionTimeout time.Duration
-	scaledownAfter    time.Duration
-
-	cUp   chan chan error
+	// How long to wait after lastInteraction before scaling down. Should be greater than
+	// connectionTimeout.
+	scaledownAfter time.Duration
+	// Channel used to communicate with the Start thread that it should be scaled up.
+	cUp chan chan error
+	// Channel used to communicate with the Start thread that it should be scaled down.
 	cDown chan struct{}
 }
 
@@ -77,12 +85,16 @@ func New() Autoscaler {
 
 	client := hcloud.NewClient(hcloud.WithToken("token"))
 
+	sshClient := newSSHClient()
+
 	// serverOpts := serverOptions(client, opts)
 
 	as := Autoscaler{
 		mx:     new(sync.Mutex),
 		client: client,
 		// serverOpts: serverOpts,
+
+		sshClient: sshClient,
 
 		lastInteraction: time.Now(),
 
@@ -123,7 +135,8 @@ func (as *Autoscaler) deleteServer() error {
 // This function will check if it is time to scale down. This decision is based
 // on the time since last (EnsureOnline) interaction with the autoscaler.
 // If it isn't time to scale down yet, the function will "re-queue" itself,
-// and check in later.
+// and check in later. This version of the function should only be called from
+// the goroutine running Start(), others should use EvaluateScaledown.
 func (as *Autoscaler) evaluateScaledown(ctx context.Context) {
 	log.Debug("Evaluating scaledown")
 	// if as.server == nil {
@@ -143,12 +156,15 @@ func (as *Autoscaler) evaluateScaledown(ctx context.Context) {
 	as.deleteServer()
 }
 
+// Threadsafe version of evaluateScaledown, idempotent.
 func (as *Autoscaler) EvaluateScaledown() {
 	as.scaledownDebounce.F()
 }
 
 // This function should be called before GetConnection to ensure that the
-// server is online before trying to connect to it, can be called many times.
+// server is online before trying to connect to it. This version
+// of the function should only be called from the goroutine running Start(),
+// other should use EnsureOnline.
 func (as *Autoscaler) ensureOnline(ctx context.Context) error {
 	log.Debug("Making sure server is online")
 	as.mx.Lock()
@@ -169,6 +185,7 @@ func (as *Autoscaler) ensureOnline(ctx context.Context) error {
 	return nil
 }
 
+// Threadsafe version of ensureOnline, idempotent.
 func (as *Autoscaler) EnsureOnline(ctx context.Context) error {
 	c := make(chan error)
 	as.cUp <- c
@@ -195,6 +212,7 @@ func (as *Autoscaler) GetConnection(ctx context.Context) (io.ReadWriteCloser, er
 	return rwc, err
 }
 
+// Starts the autoscaler. This is blocking and should be started in its own goroutine.
 func (as *Autoscaler) Start(ctx context.Context) {
 	log.Info("Starting autoscaler")
 LOOP:
