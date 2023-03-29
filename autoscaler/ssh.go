@@ -50,11 +50,22 @@ func newSSHClient() SSHClient {
 			Auth: []ssh.AuthMethod{
 				ssh.PublicKeys(signer),
 			},
-			HostKeyCallback: ssh.FixedHostKey(remoteSigner.PublicKey()),
+			HostKeyCallback:   ssh.FixedHostKey(remoteSigner.PublicKey()),
+			HostKeyAlgorithms: []string{ssh.KeyAlgoRSASHA512},
 		},
 		publicKey: signer.PublicKey(),
 		remoteKey: remoteKey,
 	}
+}
+
+// Connect to sshAddr using credentials and configuration from the SSHClient
+func (c SSHClient) Connect(sshAddr string) (*ssh.Client, error) {
+	conn, err := ssh.Dial("tcp", sshAddr, &c.config)
+	if err != nil {
+		return nil, err
+	}
+
+	return conn, err
 }
 
 func generatePrivateKey() ([]byte, error) {

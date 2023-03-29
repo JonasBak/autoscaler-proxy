@@ -4,13 +4,12 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"net"
+	"os"
 	"sync"
 	"time"
 
 	"github.com/JonasBak/docker-api-autoscaler-proxy/utils"
 	"github.com/hetznercloud/hcloud-go/hcloud"
-	_ "golang.org/x/crypto/ssh"
 )
 
 var log = utils.Logger().WithField("pkg", "autoscaler")
@@ -24,7 +23,7 @@ type AutoscalerOpts struct {
 	ServerImage      string
 }
 
-func serverOptions(client *hcloud.Client, opts AutoscalerOpts) hcloud.ServerCreateOpts {
+func serverOptions(client *hcloud.Client, opts AutoscalerOpts, cloudInit string) hcloud.ServerCreateOpts {
 	serverType, _, err := client.ServerType.GetByName(context.Background(), opts.ServerType)
 	if err != nil {
 		log.WithError(err).WithField("server_type", opts.ServerType).Fatal("Failed to fetch hetzner server type")
@@ -36,13 +35,11 @@ func serverOptions(client *hcloud.Client, opts AutoscalerOpts) hcloud.ServerCrea
 	}
 
 	return hcloud.ServerCreateOpts{
-		Name:       fmt.Sprintf("%s_todo", opts.ServerNamePrefix),
+		Name:       fmt.Sprintf("%stodo", opts.ServerNamePrefix),
 		ServerType: serverType,
 		Image:      image,
 
-		UserData: "TODO cloud-init",
-
-		// TODO
+		UserData: cloudInit,
 	}
 }
 
@@ -75,24 +72,29 @@ type Autoscaler struct {
 
 func New() Autoscaler {
 	opts := AutoscalerOpts{
-		ConnectionTimeout: 20 * time.Second,
-		ScaledownAfter:    25 * time.Second,
+		ConnectionTimeout: 2 * time.Minute,
+		ScaledownAfter:    5 * time.Minute,
 
 		ServerNamePrefix: "autoscaler",
-		ServerType:       "TODO",
-		ServerImage:      "TODO",
+		ServerType:       "cx11",
+		ServerImage:      "docker-ce",
 	}
 
-	client := hcloud.NewClient(hcloud.WithToken("token"))
+	client := hcloud.NewClient(hcloud.WithToken(os.Getenv("HCLOUD_TOKEN")))
 
 	sshClient := newSSHClient()
 
-	// serverOpts := serverOptions(client, opts)
+	cloudInit, err := CreateCloudInitFile(sshClient.remoteKey, sshClient.publicKey)
+	if err != nil {
+		log.WithError(err).Fatal("Failed to generate cloud-init.yml")
+	}
+
+	serverOpts := serverOptions(client, opts, cloudInit)
 
 	as := Autoscaler{
-		mx:     new(sync.Mutex),
-		client: client,
-		// serverOpts: serverOpts,
+		mx:         new(sync.Mutex),
+		client:     client,
+		serverOpts: serverOpts,
 
 		sshClient: sshClient,
 
@@ -105,7 +107,7 @@ func New() Autoscaler {
 		cDown: make(chan struct{}),
 	}
 
-	as.scaledownDebounce = utils.NewDebouncer(5*time.Second, func() {
+	as.scaledownDebounce = utils.NewDebouncer(20*time.Second, func() {
 		as.cDown <- struct{}{}
 	})
 
@@ -119,15 +121,44 @@ func (as *Autoscaler) createServer() error {
 
 	log.Info("Creating server")
 
+	result, _, err := as.client.Server.Create(context.Background(), as.serverOpts)
+	if err != nil {
+		log.WithError(err).Error("Failed to create server")
+		return err
+	}
+
+	log.Info("Waiting for server start")
+	_, c := as.client.Action.WatchProgress(context.Background(), result.Action)
+
+	err = <-c
+	if err != nil {
+		log.WithError(err).Error("Failed to start server")
+		return err
+	}
+
+	log.Info("Server created")
+
+	as.server = result.Server
+
 	return nil
 }
 
 func (as *Autoscaler) deleteServer() error {
-	// if as.server == nil {
-	// 	return nil
-	// }
+	if as.server == nil {
+		return nil
+	}
 
 	log.Info("Deleting server")
+
+	_, err := as.client.Server.Delete(context.Background(), as.server)
+	if err != nil {
+		log.WithError(err).Error("Failed to delete server")
+		return err
+	}
+
+	log.Info("Server deleted")
+
+	as.server = nil
 
 	return nil
 }
@@ -137,11 +168,11 @@ func (as *Autoscaler) deleteServer() error {
 // If it isn't time to scale down yet, the function will "re-queue" itself,
 // and check in later. This version of the function should only be called from
 // the goroutine running Start(), others should use EvaluateScaledown.
-func (as *Autoscaler) evaluateScaledown(ctx context.Context) {
+func (as *Autoscaler) evaluateScaledown(ctx context.Context) error {
 	log.Debug("Evaluating scaledown")
-	// if as.server == nil {
-	// 	return nil
-	// }
+	if as.server == nil {
+		return nil
+	}
 
 	as.mx.Lock()
 	defer as.mx.Unlock()
@@ -150,10 +181,10 @@ func (as *Autoscaler) evaluateScaledown(ctx context.Context) {
 
 	if timeSinceLastInteraction <= as.scaledownAfter {
 		as.scaledownDebounce.F()
-		return
+		return nil
 	}
 
-	as.deleteServer()
+	return as.deleteServer()
 }
 
 // Threadsafe version of evaluateScaledown, idempotent.
@@ -178,6 +209,8 @@ func (as *Autoscaler) ensureOnline(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
+
+		// TODO ping 22 until it's up
 	}
 
 	as.scaledownDebounce.F()
@@ -193,11 +226,17 @@ func (as *Autoscaler) EnsureOnline(ctx context.Context) error {
 }
 
 func (as *Autoscaler) GetConnection(ctx context.Context) (io.ReadWriteCloser, error) {
-	conn, err := (&net.Dialer{}).DialContext(ctx, "tcp", "127.0.0.1:8082")
+	// TODO Could share one ssh connection?
+	sshConn, err := as.sshClient.Connect(as.server.PublicNet.IPv4.IP.String() + ":22")
+	if err != nil {
+		return nil, err
+	}
+	conn, err := sshConn.Dial("unix", "/var/run/docker.sock")
 	rwc, c := utils.NewReadWriteCloseNotifier(conn)
 
 	if err == nil {
 		go func() {
+			defer sshConn.Close()
 			select {
 			case <-time.NewTimer(as.connectionTimeout).C:
 				log.Warn("Connection has been open for too long, closing")
@@ -219,10 +258,17 @@ LOOP:
 	for {
 		select {
 		case c := <-as.cUp:
-			c <- as.ensureOnline(ctx)
+			err := as.ensureOnline(ctx)
+			if err != nil {
+				log.WithError(err).Error("Failed ensure online")
+			}
+			c <- err
 			break
 		case <-as.cDown:
-			as.evaluateScaledown(ctx)
+			err := as.evaluateScaledown(ctx)
+			if err != nil {
+				log.WithError(err).Error("Failed evaluate scaledown")
+			}
 			break
 		case <-ctx.Done():
 			break LOOP
@@ -231,4 +277,8 @@ LOOP:
 }
 
 func (as *Autoscaler) Shutdown() {
+	as.mx.Lock()
+	defer as.mx.Unlock()
+
+	as.deleteServer()
 }
