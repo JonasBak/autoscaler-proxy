@@ -69,7 +69,7 @@ type Autoscaler struct {
 	// Channel used to communicate with the Start thread that it should be scaled down.
 	cDown chan struct{}
 	// Channel used to communicate with the Start thread that it should be shut down
-	cShutdown chan struct{}
+	cShutdown chan chan error
 }
 
 func New() Autoscaler {
@@ -107,7 +107,7 @@ func New() Autoscaler {
 
 		cUp:       make(chan chan error),
 		cDown:     make(chan struct{}),
-		cShutdown: make(chan struct{}),
+		cShutdown: make(chan chan error),
 	}
 
 	as.scaledownDebounce = utils.NewDebouncer(20*time.Second, func() {
@@ -282,15 +282,21 @@ LOOP:
 				log.WithError(err).Error("Failed evaluate scaledown")
 			}
 			break
-		case <-ctx.Done():
+		case c := <-as.cShutdown:
+			as.mx.Lock()
+			defer as.mx.Unlock()
+			c <- as.deleteServer()
 			break LOOP
 		}
 	}
 }
 
 func (as *Autoscaler) Shutdown() {
-	as.mx.Lock()
-	defer as.mx.Unlock()
+	c := make(chan error)
+	as.cShutdown <- c
 
-	// as.cShutdown <- struct{}{}
+	err := <-c
+	if err != nil {
+		log.WithError(err).Error("Failed do shut down autoscaler")
+	}
 }

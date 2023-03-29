@@ -92,10 +92,9 @@ func (p Proxy) Start(ctx context.Context) error {
 	p.wg.Add(1)
 	defer p.wg.Done()
 
-	// Keep track of the autoscaler
-	p.wg.Add(1)
+	// This is not keeped track of as it is "manually" stopped by calling Shutdown()
+	// in Stop
 	go func() {
-		defer p.wg.Done()
 		p.as.Start(ctx)
 	}()
 
