@@ -10,7 +10,8 @@ type ReadWriteCloseNotifier struct {
 }
 
 func NewReadWriteCloseNotifier(rwc io.ReadWriteCloser) (ReadWriteCloseNotifier, <-chan struct{}) {
-	c := make(chan struct{}, 1)
+	// Can be closed from either where it has been "issued" or where it is being used
+	c := make(chan struct{}, 2)
 
 	return ReadWriteCloseNotifier{
 		c:   c,

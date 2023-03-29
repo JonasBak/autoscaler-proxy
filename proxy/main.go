@@ -61,7 +61,7 @@ func (p Proxy) handleRequest(ctx context.Context, c net.Conn, log *logrus.Entry)
 	}
 	defer upstream.Close()
 
-	stop := make(chan struct{})
+	stop := make(chan struct{}, 2)
 
 	go func() {
 		io.Copy(upstream, c)
