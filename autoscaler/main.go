@@ -68,12 +68,14 @@ type Autoscaler struct {
 	cUp chan chan error
 	// Channel used to communicate with the Start thread that it should be scaled down.
 	cDown chan struct{}
+	// Channel used to communicate with the Start thread that it should be shut down
+	cShutdown chan struct{}
 }
 
 func New() Autoscaler {
 	opts := AutoscalerOpts{
-		ConnectionTimeout: 2 * time.Minute,
-		ScaledownAfter:    5 * time.Minute,
+		ConnectionTimeout: 10 * time.Minute,
+		ScaledownAfter:    15 * time.Minute,
 
 		ServerNamePrefix: "autoscaler",
 		ServerType:       "cx11",
@@ -103,8 +105,9 @@ func New() Autoscaler {
 		connectionTimeout: opts.ConnectionTimeout,
 		scaledownAfter:    opts.ScaledownAfter,
 
-		cUp:   make(chan chan error),
-		cDown: make(chan struct{}),
+		cUp:       make(chan chan error),
+		cDown:     make(chan struct{}),
+		cShutdown: make(chan struct{}),
 	}
 
 	as.scaledownDebounce = utils.NewDebouncer(20*time.Second, func() {
@@ -127,7 +130,7 @@ func (as *Autoscaler) createServer() error {
 		return err
 	}
 
-	log.Info("Waiting for server start")
+	log.Info("Waiting for server to start")
 	_, c := as.client.Action.WatchProgress(context.Background(), result.Action)
 
 	err = <-c
@@ -210,7 +213,16 @@ func (as *Autoscaler) ensureOnline(ctx context.Context) error {
 			return err
 		}
 
-		// TODO ping 22 until it's up
+		err = ping(5, 2, 4, as.server.PublicNet.IPv4.IP.String()+":22")
+		if err != nil {
+			return err
+		}
+	} else {
+		err := ping(2, 1, 1, as.server.PublicNet.IPv4.IP.String()+":22")
+		if err != nil {
+			return err
+		}
+
 	}
 
 	as.scaledownDebounce.F()
@@ -280,5 +292,5 @@ func (as *Autoscaler) Shutdown() {
 	as.mx.Lock()
 	defer as.mx.Unlock()
 
-	as.deleteServer()
+	// as.cShutdown <- struct{}{}
 }
