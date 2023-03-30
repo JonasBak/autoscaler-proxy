@@ -12,7 +12,15 @@ import (
 var log = utils.Logger().WithField("pkg", "main")
 
 func main() {
-	p := proxy.New("127.0.0.1:8081")
+	config := DefaultConfig()
+	if len(os.Args) > 1 {
+		c, err := ParseConfigFile(os.Args[len(os.Args)-1])
+		if err != nil {
+			log.WithError(err).Fatal("Failed to parse config file")
+		}
+		config = c
+	}
+	p := proxy.New(config)
 
 	ctx, cancel := context.WithCancel(context.Background())
 

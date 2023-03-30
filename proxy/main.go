@@ -14,6 +14,11 @@ import (
 
 var log = utils.Logger().WithField("pkg", "proxy")
 
+type ProxyOpts struct {
+	Autoscaler as.AutoscalerOpts `yaml:"autoscaler"`
+	ListenAddr string            `yaml:"listen_addr"`
+}
+
 type Proxy struct {
 	as         as.Autoscaler
 	listenAddr string
@@ -22,10 +27,10 @@ type Proxy struct {
 	wg *sync.WaitGroup
 }
 
-func New(addr string) Proxy {
+func New(opts ProxyOpts) Proxy {
 	return Proxy{
-		as:         as.New(),
-		listenAddr: "127.0.0.1:8081",
+		as:         as.New(opts.Autoscaler),
+		listenAddr: opts.ListenAddr,
 		wg:         &sync.WaitGroup{},
 	}
 }

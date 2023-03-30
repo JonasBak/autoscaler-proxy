@@ -15,12 +15,17 @@ import (
 var log = utils.Logger().WithField("pkg", "autoscaler")
 
 type AutoscalerOpts struct {
-	ConnectionTimeout time.Duration
-	ScaledownAfter    time.Duration
+	ConnectionTimeout time.Duration `yaml:"connection_timeout"`
+	ScaledownAfter    time.Duration `yaml:"scaledown_after"`
 
-	ServerNamePrefix string
-	ServerType       string
-	ServerImage      string
+	ServerNamePrefix string `yaml:"server_name_prefix"`
+	ServerType       string `yaml:"server_type"`
+	ServerImage      string `yaml:"server_image"`
+
+	UpstreamNet  string `yaml:"upstream_net"`
+	UpstreamAddr string `yaml:"upstream_addr"`
+
+	CloudInitTemplate map[string]interface{} `yaml:"cloud_init_template"`
 }
 
 func serverOptions(client *hcloud.Client, opts AutoscalerOpts, cloudInit string) hcloud.ServerCreateOpts {
@@ -44,10 +49,12 @@ func serverOptions(client *hcloud.Client, opts AutoscalerOpts, cloudInit string)
 }
 
 type Autoscaler struct {
-	client     *hcloud.Client
-	mx         *sync.Mutex
-	server     *hcloud.Server
-	serverOpts hcloud.ServerCreateOpts
+	client       *hcloud.Client
+	mx           *sync.Mutex
+	server       *hcloud.Server
+	serverOpts   hcloud.ServerCreateOpts
+	upstreamNet  string
+	upstreamAddr string
 
 	// Used to connect to the server after it has been created. Generates a private key for
 	// itself and creates a private key for the server. Both of these are created on Start().
@@ -72,21 +79,12 @@ type Autoscaler struct {
 	cShutdown chan chan error
 }
 
-func New() Autoscaler {
-	opts := AutoscalerOpts{
-		ConnectionTimeout: 10 * time.Minute,
-		ScaledownAfter:    15 * time.Minute,
-
-		ServerNamePrefix: "autoscaler",
-		ServerType:       "cx11",
-		ServerImage:      "docker-ce",
-	}
-
+func New(opts AutoscalerOpts) Autoscaler {
 	client := hcloud.NewClient(hcloud.WithToken(os.Getenv("HCLOUD_TOKEN")))
 
 	sshClient := newSSHClient()
 
-	cloudInit, err := CreateCloudInitFile(sshClient.remoteKey, sshClient.publicKey)
+	cloudInit, err := CreateCloudInitFile(opts.CloudInitTemplate, sshClient.remoteKey, sshClient.publicKey)
 	if err != nil {
 		log.WithError(err).Fatal("Failed to generate cloud-init.yml")
 	}
@@ -94,20 +92,18 @@ func New() Autoscaler {
 	serverOpts := serverOptions(client, opts, cloudInit)
 
 	as := Autoscaler{
-		mx:         new(sync.Mutex),
-		client:     client,
-		serverOpts: serverOpts,
-
-		sshClient: sshClient,
-
-		lastInteraction: time.Now(),
-
+		mx:                new(sync.Mutex),
+		client:            client,
+		serverOpts:        serverOpts,
+		upstreamNet:       opts.UpstreamNet,
+		upstreamAddr:      opts.UpstreamAddr,
+		sshClient:         sshClient,
+		lastInteraction:   time.Now(),
 		connectionTimeout: opts.ConnectionTimeout,
 		scaledownAfter:    opts.ScaledownAfter,
-
-		cUp:       make(chan chan error),
-		cDown:     make(chan struct{}),
-		cShutdown: make(chan chan error),
+		cUp:               make(chan chan error),
+		cDown:             make(chan struct{}),
+		cShutdown:         make(chan chan error),
 	}
 
 	as.scaledownDebounce = utils.NewDebouncer(20*time.Second, func() {
@@ -243,7 +239,7 @@ func (as *Autoscaler) GetConnection(ctx context.Context) (io.ReadWriteCloser, er
 	if err != nil {
 		return nil, err
 	}
-	conn, err := sshConn.Dial("unix", "/var/run/docker.sock")
+	conn, err := sshConn.Dial(as.upstreamNet, as.upstreamAddr)
 	rwc, c := utils.NewReadWriteCloseNotifier(conn)
 
 	if err == nil {

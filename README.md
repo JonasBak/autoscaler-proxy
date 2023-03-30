@@ -15,6 +15,6 @@ HCLOUD_TOKEN=your_token go run .
 DOCKER_HOST=tcp://127.0.0.1:8081 docker ps
 ```
 
-This will create a server in Hetzner and let you run docker commands on it. Right now it takes about one minute to create the server on first request (or when it is scaled down), so this is an area of improvement. The server will be deleted after being idle for a while, or when stopping the proxy.
+This will create a server in Hetzner and let you run docker commands on it. Right now it takes about 30 seconds to one minute to create the server on first request (or when it is scaled down). The server will be deleted after being idle for a while, or when stopping the proxy.
 
 The communication with the server is over SSH, using keys that are created on startup. The server is configured on creation using cloud-init.
