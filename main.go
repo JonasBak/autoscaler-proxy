@@ -37,4 +37,5 @@ func main() {
 		break
 	}
 	p.Stop()
+	log.Debug("Stopped")
 }

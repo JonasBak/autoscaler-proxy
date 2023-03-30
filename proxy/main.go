@@ -9,19 +9,23 @@ import (
 
 	as "github.com/JonasBak/docker-api-autoscaler-proxy/autoscaler"
 	"github.com/JonasBak/docker-api-autoscaler-proxy/utils"
-	"github.com/sirupsen/logrus"
 )
 
 var log = utils.Logger().WithField("pkg", "proxy")
 
+type newConnectionCallback struct {
+	addr string
+	conn net.Conn
+}
+
 type ProxyOpts struct {
-	Autoscaler as.AutoscalerOpts `yaml:"autoscaler"`
-	ListenAddr string            `yaml:"listen_addr"`
+	Autoscaler as.AutoscalerOpts          `yaml:"autoscaler"`
+	ListenAddr map[string]as.UpstreamOpts `yaml:"listen_addr"`
 }
 
 type Proxy struct {
 	as         as.Autoscaler
-	listenAddr string
+	listenAddr map[string]as.UpstreamOpts
 	// Used to keep track of ongoing connections, and wait for them to close when
 	// stopping the proxy.
 	wg *sync.WaitGroup
@@ -35,37 +39,54 @@ func New(opts ProxyOpts) Proxy {
 	}
 }
 
-// Spawns a goroutine that accepts incoming connections, and sends them over the
-// channel returned by the function.
-func (p Proxy) acceptIncoming(l net.Listener, log *logrus.Entry) chan net.Conn {
-	newConns := make(chan net.Conn)
+// Spawns a goroutine that accepts incoming connections, and sends them, along with
+// addr to c, to keep track of which addr the connection came from.
+func (p Proxy) acceptIncoming(ctx context.Context, addr string, c chan newConnectionCallback) {
+	log := log.WithField("addr", addr)
+	log.Debug("Setting up listener at addr")
 
-	go func(l net.Listener) {
-		for {
-			c, err := l.Accept()
-			if err != nil {
-				log.WithError(err).Error("Error accepting incoming request")
-				break
-			}
-			log.WithField("remote_addr", c.RemoteAddr().String()).Debug("Accepted request")
-			newConns <- c
+	l, err := (&net.ListenConfig{}).Listen(ctx, "tcp", addr)
+	if err != nil {
+		log.WithError(err).Error("Error listening to addr")
+		return
+	}
+	defer l.Close()
+	go func() {
+		<-ctx.Done()
+		l.Close()
+	}()
+
+	log.Info("Listening at addr")
+
+	for {
+		conn, err := l.Accept()
+		if err != nil {
+			log.WithError(err).Error("Error accepting incoming request")
+			return
 		}
-	}(l)
-
-	return newConns
+		log.WithField("remote_addr", conn.RemoteAddr().String()).Debug("Accepted request")
+		c <- newConnectionCallback{
+			addr: addr,
+			conn: conn,
+		}
+	}
 }
 
-// Takes an incoming connection, gets a connection from the autoscaler, and "connects"
-// the two.
-func (p Proxy) handleRequest(ctx context.Context, c net.Conn, log *logrus.Entry) {
+// Takes an incoming connection and the addr it came at, gets the appropriate connection from
+// the autoscaler based on addr, and "connects" the two.
+func (p Proxy) handleRequest(ctx context.Context, c net.Conn, addr string) {
+	log := log.WithField("remote_addr", c.RemoteAddr().String())
 	log.Debug("Handling request")
+
+	// Route the connection based on which addr it came from
+	upstreamOpts := p.listenAddr[addr]
 
 	ctx2, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
 	defer c.Close()
 
-	upstream, err := p.as.GetConnection(ctx2)
+	upstream, err := p.as.GetConnection(ctx2, upstreamOpts)
 	if err != nil {
 		log.WithError(err).Error("Failed to connect to autoscaler upstream")
 		return
@@ -90,8 +111,7 @@ func (p Proxy) handleRequest(ctx context.Context, c net.Conn, log *logrus.Entry)
 
 // Blocking function that starts the autoscaler and listens and handles incoming requests.
 func (p Proxy) Start(ctx context.Context) error {
-	log := log.WithField("addr", p.listenAddr)
-	log.Info("Listen to incoming requests")
+	log.Info("Starting proxy")
 
 	// Keep track of this "main" goroutine
 	p.wg.Add(1)
@@ -103,24 +123,25 @@ func (p Proxy) Start(ctx context.Context) error {
 		p.as.Start(ctx)
 	}()
 
-	l, err := (&net.ListenConfig{}).Listen(ctx, "tcp", p.listenAddr)
-	defer l.Close()
+	newConns := make(chan newConnectionCallback)
 
-	if err != nil {
-		log.WithError(err).Fatal("Failed to listen")
+	for addr, _ := range p.listenAddr {
+		addr := addr
+		// Keep track of each listener goroutine
+		p.wg.Add(1)
+		go func() {
+			defer p.wg.Done()
+			p.acceptIncoming(ctx, addr, newConns)
+		}()
 	}
-
-	newConns := p.acceptIncoming(l, log)
 
 LOOP:
 	for {
 		select {
 		case c := <-newConns:
-			log := log.WithField("remote_addr", c.RemoteAddr().String())
-
 			if err := p.as.EnsureOnline(ctx); err != nil {
-				c.Close()
-				log.WithError(err).Error("Autoscaler ensure online failed")
+				c.conn.Close()
+				log.WithField("remote_addr", c.conn.RemoteAddr().String()).WithError(err).Error("Autoscaler ensure online failed")
 				continue LOOP
 			}
 
@@ -128,7 +149,7 @@ LOOP:
 			p.wg.Add(1)
 			go func() {
 				defer p.wg.Done()
-				p.handleRequest(ctx, c, log)
+				p.handleRequest(ctx, c.conn, c.addr)
 			}()
 			break
 		case <-ctx.Done():

@@ -14,6 +14,11 @@ import (
 
 var log = utils.Logger().WithField("pkg", "autoscaler")
 
+type UpstreamOpts struct {
+	Net  string `yaml:"net"`
+	Addr string `yaml:"addr"`
+}
+
 type AutoscalerOpts struct {
 	ConnectionTimeout time.Duration `yaml:"connection_timeout"`
 	ScaledownAfter    time.Duration `yaml:"scaledown_after"`
@@ -21,9 +26,6 @@ type AutoscalerOpts struct {
 	ServerNamePrefix string `yaml:"server_name_prefix"`
 	ServerType       string `yaml:"server_type"`
 	ServerImage      string `yaml:"server_image"`
-
-	UpstreamNet  string `yaml:"upstream_net"`
-	UpstreamAddr string `yaml:"upstream_addr"`
 
 	CloudInitTemplate map[string]interface{} `yaml:"cloud_init_template"`
 }
@@ -49,12 +51,10 @@ func serverOptions(client *hcloud.Client, opts AutoscalerOpts, cloudInit string)
 }
 
 type Autoscaler struct {
-	client       *hcloud.Client
-	mx           *sync.Mutex
-	server       *hcloud.Server
-	serverOpts   hcloud.ServerCreateOpts
-	upstreamNet  string
-	upstreamAddr string
+	client     *hcloud.Client
+	mx         *sync.Mutex
+	server     *hcloud.Server
+	serverOpts hcloud.ServerCreateOpts
 
 	// Used to connect to the server after it has been created. Generates a private key for
 	// itself and creates a private key for the server. Both of these are created on Start().
@@ -95,8 +95,6 @@ func New(opts AutoscalerOpts) Autoscaler {
 		mx:                new(sync.Mutex),
 		client:            client,
 		serverOpts:        serverOpts,
-		upstreamNet:       opts.UpstreamNet,
-		upstreamAddr:      opts.UpstreamAddr,
 		sshClient:         sshClient,
 		lastInteraction:   time.Now(),
 		connectionTimeout: opts.ConnectionTimeout,
@@ -233,13 +231,13 @@ func (as *Autoscaler) EnsureOnline(ctx context.Context) error {
 	return <-c
 }
 
-func (as *Autoscaler) GetConnection(ctx context.Context) (io.ReadWriteCloser, error) {
+func (as *Autoscaler) GetConnection(ctx context.Context, opts UpstreamOpts) (io.ReadWriteCloser, error) {
 	// TODO Could share one ssh connection?
 	sshConn, err := as.sshClient.Connect(as.server.PublicNet.IPv4.IP.String() + ":22")
 	if err != nil {
 		return nil, err
 	}
-	conn, err := sshConn.Dial(as.upstreamNet, as.upstreamAddr)
+	conn, err := sshConn.Dial(opts.Net, opts.Addr)
 	rwc, c := utils.NewReadWriteCloseNotifier(conn)
 
 	if err == nil {

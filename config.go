@@ -19,9 +19,6 @@ func DefaultConfig() proxy.ProxyOpts {
 			ServerType:       "cpx31",
 			ServerImage:      "docker-ce",
 
-			UpstreamNet:  "unix",
-			UpstreamAddr: "/var/run/docker.sock",
-
 			CloudInitTemplate: map[string]interface{}{
 				"groups":     []string{"docker"},
 				"ssh_pwauth": false,
@@ -40,7 +37,12 @@ func DefaultConfig() proxy.ProxyOpts {
 				},
 			},
 		},
-		ListenAddr: "127.0.0.1:8081",
+		ListenAddr: map[string]as.UpstreamOpts{
+			"127.0.0.1:8081": {
+				Net:  "unix",
+				Addr: "/var/run/docker.sock",
+			},
+		},
 	}
 }
 
