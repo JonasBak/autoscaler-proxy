@@ -6,6 +6,7 @@ import (
 
 	as "github.com/JonasBak/docker-api-autoscaler-proxy/autoscaler"
 	"github.com/JonasBak/docker-api-autoscaler-proxy/proxy"
+	"go.mozilla.org/sops/v3/decrypt"
 	"gopkg.in/yaml.v3"
 )
 
@@ -36,6 +37,7 @@ func DefaultConfig() proxy.ProxyOpts {
 					},
 				},
 			},
+			CloudInitVariables: map[string]string{},
 		},
 		ListenAddr: map[string]as.UpstreamOpts{
 			"127.0.0.1:8081": {
@@ -58,5 +60,15 @@ func ParseConfigFile(path string) (proxy.ProxyOpts, error) {
 		return opts, err
 	}
 
-	return opts, err
+	if opts.Autoscaler.CloudInitVariablesFrom != "" {
+		variables, err := decrypt.File(opts.Autoscaler.CloudInitVariablesFrom, "yaml")
+		if err != nil {
+			return opts, err
+		}
+		if err := yaml.Unmarshal(variables, &opts.Autoscaler.CloudInitVariables); err != nil {
+			return opts, err
+		}
+	}
+
+	return opts, nil
 }

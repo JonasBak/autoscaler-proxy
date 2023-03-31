@@ -27,7 +27,9 @@ type AutoscalerOpts struct {
 	ServerType       string `yaml:"server_type"`
 	ServerImage      string `yaml:"server_image"`
 
-	CloudInitTemplate map[string]interface{} `yaml:"cloud_init_template"`
+	CloudInitTemplate      map[string]interface{} `yaml:"cloud_init_template"`
+	CloudInitVariables     map[string]string      `yaml:"cloud_init_variables"`
+	CloudInitVariablesFrom string                 `yaml:"cloud_init_variables_from"`
 }
 
 func serverOptions(client *hcloud.Client, opts AutoscalerOpts, cloudInit string) hcloud.ServerCreateOpts {
@@ -84,7 +86,7 @@ func New(opts AutoscalerOpts) Autoscaler {
 
 	sshClient := newSSHClient()
 
-	cloudInit, err := CreateCloudInitFile(opts.CloudInitTemplate, sshClient.remoteKey, sshClient.publicKey)
+	cloudInit, err := CreateCloudInitFile(opts.CloudInitTemplate, opts.CloudInitVariables, sshClient.remoteKey, sshClient.publicKey)
 	if err != nil {
 		log.WithError(err).Fatal("Failed to generate cloud-init.yml")
 	}
