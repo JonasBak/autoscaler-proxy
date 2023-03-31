@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/JonasBak/docker-api-autoscaler-proxy/utils"
+	"github.com/JonasBak/autoscaler-proxy/utils"
 	"github.com/hetznercloud/hcloud-go/hcloud"
 )
 

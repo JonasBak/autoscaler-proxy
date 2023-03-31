@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	as "github.com/JonasBak/docker-api-autoscaler-proxy/autoscaler"
-	"github.com/JonasBak/docker-api-autoscaler-proxy/utils"
+	as "github.com/JonasBak/autoscaler-proxy/autoscaler"
+	"github.com/JonasBak/autoscaler-proxy/utils"
 )
 
 var log = utils.Logger().WithField("pkg", "proxy")

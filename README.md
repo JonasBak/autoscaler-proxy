@@ -1,4 +1,4 @@
-# docker-api-autoscaler-proxy (WIP)
+# autoscaler-proxy (WIP)
 
 This is a small server I created that proxies incoming tcp connections to a hetzner server that is created and destroyed on demand.
 

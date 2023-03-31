@@ -5,8 +5,8 @@ import (
 	"os"
 	"os/signal"
 
-	"github.com/JonasBak/docker-api-autoscaler-proxy/proxy"
-	"github.com/JonasBak/docker-api-autoscaler-proxy/utils"
+	"github.com/JonasBak/autoscaler-proxy/proxy"
+	"github.com/JonasBak/autoscaler-proxy/utils"
 )
 
 var log = utils.Logger().WithField("pkg", "main")

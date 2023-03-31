@@ -1,4 +1,4 @@
-module github.com/JonasBak/docker-api-autoscaler-proxy
+module github.com/JonasBak/autoscaler-proxy
 
 go 1.20
 

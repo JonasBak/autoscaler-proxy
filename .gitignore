@@ -1,4 +1,4 @@
-docker-api-autoscaler-proxy
+autoscaler-proxy
 cloud-init.yml
 dev.env
 config.yml

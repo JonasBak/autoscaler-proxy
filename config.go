@@ -4,8 +4,8 @@ import (
 	"os"
 	"time"
 
-	as "github.com/JonasBak/docker-api-autoscaler-proxy/autoscaler"
-	"github.com/JonasBak/docker-api-autoscaler-proxy/proxy"
+	as "github.com/JonasBak/autoscaler-proxy/autoscaler"
+	"github.com/JonasBak/autoscaler-proxy/proxy"
 	"go.mozilla.org/sops/v3/decrypt"
 	"gopkg.in/yaml.v3"
 )
