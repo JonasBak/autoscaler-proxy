@@ -53,8 +53,12 @@ func serverOptions(client *hcloud.Client, opts AutoscalerOpts, cloudInit string)
 		location = l
 	}
 
+	name := fmt.Sprintf("%s-%s", opts.ServerNamePrefix, utils.RandomString(6))
+
+	log = log.WithField("server", name)
+
 	return hcloud.ServerCreateOpts{
-		Name:       fmt.Sprintf("%stodo", opts.ServerNamePrefix),
+		Name:       name,
 		ServerType: serverType,
 		Image:      image,
 		Location:   location,
@@ -220,6 +224,7 @@ func (as *Autoscaler) ensureOnline(ctx context.Context) error {
 			return err
 		}
 
+		log.Info("Waiting for ping")
 		err = ping(5, 2, 4, as.server.PublicNet.IPv4.IP.String()+":22")
 		if err != nil {
 			return err
