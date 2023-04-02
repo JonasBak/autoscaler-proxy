@@ -26,6 +26,7 @@ type AutoscalerOpts struct {
 	ServerNamePrefix string `yaml:"server_name_prefix"`
 	ServerType       string `yaml:"server_type"`
 	ServerImage      string `yaml:"server_image"`
+	ServerLocation   string `yaml:"server_location"`
 
 	CloudInitTemplate      map[string]interface{} `yaml:"cloud_init_template"`
 	CloudInitVariables     map[string]string      `yaml:"cloud_init_variables"`
@@ -40,13 +41,23 @@ func serverOptions(client *hcloud.Client, opts AutoscalerOpts, cloudInit string)
 
 	image, _, err := client.Image.GetByName(context.Background(), opts.ServerImage)
 	if err != nil {
-		log.WithError(err).WithField("server_image", opts.ServerImage).Fatal("Failed to fetch hetzner image")
+		log.WithError(err).WithField("server_image", opts.ServerImage).Fatal("Failed to fetch hetzner server image")
+	}
+
+	var location *hcloud.Location = nil
+	if opts.ServerLocation != "" {
+		l, _, err := client.Location.GetByName(context.Background(), opts.ServerLocation)
+		if err != nil {
+			log.WithError(err).WithField("server_location", opts.ServerLocation).Fatal("Failed to fetch hetzner server location")
+		}
+		location = l
 	}
 
 	return hcloud.ServerCreateOpts{
 		Name:       fmt.Sprintf("%stodo", opts.ServerNamePrefix),
 		ServerType: serverType,
 		Image:      image,
+		Location:   location,
 
 		UserData: cloudInit,
 	}

@@ -64,7 +64,7 @@ You can also put key-value pairs in `autoscaler.cloud_init_variables` and refere
 
 The proxy supports having multiple upstreams, useful if you for example want to use the server for both normal ssh access and docker. An example of such a configuration file could look like this:
 
-```
+```yaml
 autoscaler:
   cloud_init_template:
     users:
@@ -93,6 +93,7 @@ Another useful thing you could do is to override the cloud-init file to run for 
 autoscaler:
   cloud_init_template:
     runcmd:
-      - "docker run -d --name=tailscaled -v /var/lib:/var/lib -v /dev/net/tun:/dev/net/tun --network=host --cap-add=NET_ADMIN --cap-add=NET_RAW --env TS_AUTHKEY=${TS_AUTHKEY} ghcr.io/tailscale/tailscale:v1.38.3"
+      - curl -fsSL https://tailscale.com/install.sh | sh
+      - tailscale up --authkey ${TS_AUTHKEY}
   cloud_init_variables_from: secrets.yml
 ```
