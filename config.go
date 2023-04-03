@@ -6,7 +6,6 @@ import (
 
 	as "github.com/JonasBak/autoscaler-proxy/autoscaler"
 	"github.com/JonasBak/autoscaler-proxy/proxy"
-	"go.mozilla.org/sops/v3/decrypt"
 	"gopkg.in/yaml.v3"
 )
 
@@ -60,14 +59,8 @@ func ParseConfigFile(path string) (proxy.ProxyOpts, error) {
 		return opts, err
 	}
 
-	if opts.Autoscaler.CloudInitVariablesFrom != "" {
-		variables, err := decrypt.File(opts.Autoscaler.CloudInitVariablesFrom, "yaml")
-		if err != nil {
-			return opts, err
-		}
-		if err := yaml.Unmarshal(variables, &opts.Autoscaler.CloudInitVariables); err != nil {
-			return opts, err
-		}
+	if opts.Autoscaler.HCloudToken == "" {
+		opts.Autoscaler.HCloudToken = os.Getenv("HCLOUD_TOKEN")
 	}
 
 	return opts, nil

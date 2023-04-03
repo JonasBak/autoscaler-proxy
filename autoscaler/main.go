@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
 	"sync"
 	"time"
 
@@ -20,6 +19,8 @@ type UpstreamOpts struct {
 }
 
 type AutoscalerOpts struct {
+	HCloudToken string `yaml:"hcloud_token"`
+
 	ConnectionTimeout time.Duration `yaml:"connection_timeout"`
 	ScaledownAfter    time.Duration `yaml:"scaledown_after"`
 
@@ -97,11 +98,11 @@ type Autoscaler struct {
 }
 
 func New(opts AutoscalerOpts) Autoscaler {
-	client := hcloud.NewClient(hcloud.WithToken(os.Getenv("HCLOUD_TOKEN")))
+	client := hcloud.NewClient(hcloud.WithToken(opts.HCloudToken))
 
 	sshClient := newSSHClient()
 
-	cloudInit, err := CreateCloudInitFile(opts.CloudInitTemplate, opts.CloudInitVariables, sshClient.remoteKey, sshClient.publicKey)
+	cloudInit, err := CreateCloudInitFile(opts.CloudInitTemplate, opts, sshClient.remoteKey, sshClient.publicKey)
 	if err != nil {
 		log.WithError(err).Fatal("Failed to generate cloud-init.yml")
 	}

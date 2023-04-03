@@ -2,57 +2,14 @@ package autoscaler
 
 import (
 	"fmt"
-	"reflect"
-	"strings"
 
+	"github.com/JonasBak/autoscaler-proxy/utils"
+	"go.mozilla.org/sops/v3/decrypt"
 	"golang.org/x/crypto/ssh"
 	"gopkg.in/yaml.v3"
 )
 
-func buildCloudInitTemplateString(variables map[string]string, v string) string {
-	for key, replaceWith := range variables {
-		v = strings.ReplaceAll(v, fmt.Sprintf("${%s}", key), replaceWith)
-	}
-	return v
-}
-
-func buildCloudInitTemplateSlice(variables map[string]string, v []interface{}) []interface{} {
-	for i, elem := range v {
-		v[i] = buildCloudInitTemplateValue(variables, elem)
-	}
-	return v
-}
-
-func buildCloudInitTemplateValue(variables map[string]string, v interface{}) interface{} {
-	ty := reflect.TypeOf(v).Kind()
-	if ty == reflect.String {
-		return buildCloudInitTemplateString(variables, v.(string))
-	} else if ty == reflect.Slice {
-		s := reflect.ValueOf(v)
-		v2 := []interface{}{}
-		for i := 0; i < s.Len(); i++ {
-			v2 = append(v2, s.Index(i).Interface())
-		}
-		return buildCloudInitTemplateSlice(variables, v2)
-	} else if ty == reflect.Map {
-		v2 := map[string]interface{}{}
-		iter := reflect.ValueOf(v).MapRange()
-		for iter.Next() {
-			v2[iter.Key().Interface().(string)] = iter.Value().Interface()
-		}
-		return buildCloudInitTemplate(variables, v2)
-	}
-	return v
-}
-
-func buildCloudInitTemplate(variables map[string]string, template map[string]interface{}) map[string]interface{} {
-	for k, v := range template {
-		template[k] = buildCloudInitTemplateValue(variables, v)
-	}
-	return template
-}
-
-func CreateCloudInitFile(template map[string]interface{}, variables map[string]string, serverKeyBytes []byte, authorizedKey ssh.PublicKey) (string, error) {
+func CreateCloudInitFile(template map[string]interface{}, opts AutoscalerOpts, serverKeyBytes []byte, authorizedKey ssh.PublicKey) (string, error) {
 	serverKey, err := ssh.ParsePrivateKey(serverKeyBytes)
 	if err != nil {
 		return "", err
@@ -60,15 +17,26 @@ func CreateCloudInitFile(template map[string]interface{}, variables map[string]s
 	pubkeyBytes := ssh.MarshalAuthorizedKey(serverKey.PublicKey())
 	authorizedKeyBytes := ssh.MarshalAuthorizedKey(authorizedKey)
 
+	variables := opts.CloudInitVariables
 	if variables == nil {
 		variables = make(map[string]string)
+	}
+
+	if opts.CloudInitVariablesFrom != "" {
+		yml, err := decrypt.File(opts.CloudInitVariablesFrom, "yaml")
+		if err != nil {
+			return "", err
+		}
+		if err := yaml.Unmarshal(yml, &variables); err != nil {
+			return "", err
+		}
 	}
 
 	variables["SERVER_RSA_PRIVATE"] = string(serverKeyBytes)
 	variables["SERVER_RSA_PUBLIC"] = string(pubkeyBytes)
 	variables["AUTOSCALER_AUTHORIZED_KEY"] = string(authorizedKeyBytes)
 
-	config := buildCloudInitTemplate(variables, template)
+	config := utils.BuildTemplate(utils.TemplateMap(variables), template)
 
 	d, err := yaml.Marshal(&config)
 
