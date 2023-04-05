@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"sync"
 	"time"
 
@@ -28,6 +29,8 @@ type AutoscalerOpts struct {
 	ServerType       string `yaml:"server_type"`
 	ServerImage      string `yaml:"server_image"`
 	ServerLocation   string `yaml:"server_location"`
+
+	WaitFor *UpstreamOpts `yaml:"wait_for"`
 
 	CloudInitTemplate      map[string]interface{} `yaml:"cloud_init_template"`
 	CloudInitVariables     map[string]string      `yaml:"cloud_init_variables"`
@@ -79,8 +82,6 @@ type Autoscaler struct {
 	// Note that this means that one instance of the autoscaler can't talk to servers created
 	// by other instances.
 	sshClient SSHClient
-	// Used to "queue" a scaledown evaluation with EvaluateScaledown
-	scaledownDebounce *utils.Debouncer
 	// Used to decide when it is time to scale down
 	lastInteraction time.Time
 	// The max length of time before a connection is forcefully closed. Used to avoid lingering
@@ -91,10 +92,10 @@ type Autoscaler struct {
 	scaledownAfter time.Duration
 	// Channel used to communicate with the Start thread that it should be scaled up.
 	cUp chan chan error
-	// Channel used to communicate with the Start thread that it should be scaled down.
-	cDown chan struct{}
 	// Channel used to communicate with the Start thread that it should be shut down
 	cShutdown chan chan error
+
+	waitFor *UpstreamOpts
 }
 
 func New(opts AutoscalerOpts) Autoscaler {
@@ -118,13 +119,9 @@ func New(opts AutoscalerOpts) Autoscaler {
 		connectionTimeout: opts.ConnectionTimeout,
 		scaledownAfter:    opts.ScaledownAfter,
 		cUp:               make(chan chan error),
-		cDown:             make(chan struct{}),
 		cShutdown:         make(chan chan error),
+		waitFor:           opts.WaitFor,
 	}
-
-	as.scaledownDebounce = utils.NewDebouncer(20*time.Second, func() {
-		as.cDown <- struct{}{}
-	})
 
 	return as
 }
@@ -180,11 +177,8 @@ func (as *Autoscaler) deleteServer() error {
 
 // This function will check if it is time to scale down. This decision is based
 // on the time since last (EnsureOnline) interaction with the autoscaler.
-// If it isn't time to scale down yet, the function will "re-queue" itself,
-// and check in later. This version of the function should only be called from
-// the goroutine running Start(), others should use EvaluateScaledown.
+// This version of the function should only be called from the goroutine running Start().
 func (as *Autoscaler) evaluateScaledown(ctx context.Context) error {
-	log.Debug("Evaluating scaledown")
 	if as.server == nil {
 		return nil
 	}
@@ -194,17 +188,13 @@ func (as *Autoscaler) evaluateScaledown(ctx context.Context) error {
 
 	timeSinceLastInteraction := time.Now().Sub(as.lastInteraction)
 
+	log.WithField("time_since_last_interaction", timeSinceLastInteraction.String()).Debug("Evaluating scaledown")
+
 	if timeSinceLastInteraction <= as.scaledownAfter {
-		as.scaledownDebounce.F()
 		return nil
 	}
 
 	return as.deleteServer()
-}
-
-// Threadsafe version of evaluateScaledown, idempotent.
-func (as *Autoscaler) EvaluateScaledown() {
-	as.scaledownDebounce.F()
 }
 
 // This function should be called before GetConnection to ensure that the
@@ -226,19 +216,28 @@ func (as *Autoscaler) ensureOnline(ctx context.Context) error {
 		}
 
 		log.Info("Waiting for ping")
-		err = ping(5, 2, 4, as.server.PublicNet.IPv4.IP.String()+":22")
+		err = ping(6, 4, 5, as.server.PublicNet.IPv4.IP.String()+":22")
 		if err != nil {
 			return err
 		}
+		if waitFor := as.waitFor; waitFor != nil {
+			log.Info("Pinging wait_for")
+			sshConn, err := as.sshClient.Connect(as.server.PublicNet.IPv4.IP.String() + ":22")
+			if err != nil {
+				return err
+			}
+			defer sshConn.Close()
+			pingConn(6, 5, func() (net.Conn, error) {
+				return sshConn.Dial(waitFor.Net, waitFor.Addr)
+			})
+		}
 	} else {
-		err := ping(2, 1, 1, as.server.PublicNet.IPv4.IP.String()+":22")
+		err := ping(2, 2, 1, as.server.PublicNet.IPv4.IP.String()+":22")
 		if err != nil {
 			return err
 		}
 
 	}
-
-	as.scaledownDebounce.F()
 
 	return nil
 }
@@ -267,7 +266,6 @@ func (as *Autoscaler) GetConnection(ctx context.Context, opts UpstreamOpts) (io.
 				log.Warn("Connection has been open for too long, closing")
 				rwc.Close()
 			case <-c:
-				as.EvaluateScaledown()
 				break
 			}
 		}()
@@ -279,6 +277,9 @@ func (as *Autoscaler) GetConnection(ctx context.Context, opts UpstreamOpts) (io.
 // Starts the autoscaler. This is blocking and should be started in its own goroutine.
 func (as *Autoscaler) Start(ctx context.Context) {
 	log.Info("Starting autoscaler")
+
+	ticker := time.NewTicker(2 * time.Minute)
+	defer ticker.Stop()
 LOOP:
 	for {
 		select {
@@ -289,7 +290,7 @@ LOOP:
 			}
 			c <- err
 			break
-		case <-as.cDown:
+		case <-ticker.C:
 			err := as.evaluateScaledown(ctx)
 			if err != nil {
 				log.WithError(err).Error("Failed evaluate scaledown")

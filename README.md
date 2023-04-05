@@ -96,4 +96,9 @@ autoscaler:
       - curl -fsSL https://tailscale.com/install.sh | sh
       - tailscale up --authkey ${TS_AUTHKEY}
   cloud_init_variables_from: secrets.yml
+  wait_for:
+    net: tcp
+    addr: some_tailscale_ip:22
 ```
+
+This would install tailscale and run `tailscale up` with an authkey from an encrypted file (secrets.yml). The autoscaler would wait until it was able to connect to `some_tailscale_ip:22` from the server before starting to proxy connections, so we know the server is fully configured and working as intended.
