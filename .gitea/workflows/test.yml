@@ -1,0 +1,18 @@
+name: Run build and tests
+
+on:
+  - push
+  - pull_request
+
+jobs:
+  build_and_test:
+    name: Build and test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Install go
+        run: wget https://go.dev/dl/go1.20.3.linux-amd64.tar.gz && tar -C /usr/local -xzf go1.20.3.linux-amd64.tar.gz && echo /usr/local/go/bin >> $GITHUB_PATH
+      - name: Build
+        run: go build -v .
+      - name: Run tests
+        run: go test -v ./...
