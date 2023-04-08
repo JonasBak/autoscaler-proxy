@@ -172,3 +172,13 @@ func (p Proxy) Stop() {
 
 	log.Debug("Done")
 }
+
+// Forcefully kill the proxy and autoscaler
+func (p Proxy) Kill() {
+	log.Debug("Killing proxy...")
+
+	log.Debug("Killing autoscaler")
+	p.as.Kill()
+
+	log.Debug("Done")
+}

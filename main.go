@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"os/signal"
+	"syscall"
 
 	"github.com/JonasBak/autoscaler-proxy/proxy"
 	"github.com/JonasBak/autoscaler-proxy/utils"
@@ -26,9 +27,18 @@ func main() {
 
 	go p.Start(ctx)
 
-	c := make(chan os.Signal, 1)
+	go func() {
+		c := make(chan os.Signal, 1)
+		signal.Notify(c, os.Kill, syscall.SIGTERM)
+		<-c
+		log.Warn("Killing...")
+		p.Kill()
+		log.Warn("Killed")
+		os.Exit(0)
+	}()
 
-	signal.Notify(c, os.Interrupt) //, os.Kill)
+	c := make(chan os.Signal, 1)
+	signal.Notify(c, os.Interrupt)
 
 	select {
 	case <-c:

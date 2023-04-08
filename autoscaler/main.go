@@ -314,3 +314,13 @@ func (as *Autoscaler) Shutdown() {
 		log.WithError(err).Error("Failed do shut down autoscaler")
 	}
 }
+
+func (as *Autoscaler) Kill() {
+	c := make(chan error)
+	as.cShutdown <- c
+
+	err := <-c
+	if err != nil {
+		log.WithError(err).Error("Failed do kill autoscaler")
+	}
+}
