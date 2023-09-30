@@ -1,11 +1,13 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"time"
 
 	as "github.com/JonasBak/autoscaler-proxy/autoscaler"
 	"github.com/JonasBak/autoscaler-proxy/proxy"
+	"github.com/JonasBak/autoscaler-proxy/utils"
 	"gopkg.in/yaml.v3"
 )
 
@@ -38,13 +40,20 @@ func DefaultConfig() proxy.ProxyOpts {
 			},
 			CloudInitVariables: map[string]string{},
 		},
-		ListenAddr: map[string]as.UpstreamOpts{
-			"127.0.0.1:8081": {
-				Net:  "unix",
-				Addr: "/var/run/docker.sock",
-			},
-		},
+		ListenAddr: map[string]as.UpstreamOpts{},
 	}
+}
+
+func patchProcsOpts(opts proxy.ProxyOpts) proxy.ProxyOpts {
+	variables := make(map[string]string)
+	for addr, upstream := range opts.ListenAddr {
+		if upstream.Name != nil {
+			variables[fmt.Sprintf("autoscaler.listen.%s", *upstream.Name)] = addr
+		}
+	}
+	env := utils.BuildTemplate(utils.TemplateMap(variables), opts.Procs.Env).(map[string]string)
+	opts.Procs.Env = env
+	return opts
 }
 
 func ParseConfigFile(path string) (proxy.ProxyOpts, error) {
@@ -59,9 +68,7 @@ func ParseConfigFile(path string) (proxy.ProxyOpts, error) {
 		return opts, err
 	}
 
-	if opts.Autoscaler.HCloudToken == "" {
-		opts.Autoscaler.HCloudToken = os.Getenv("HCLOUD_TOKEN")
-	}
+	opts = patchProcsOpts(opts)
 
 	return opts, nil
 }

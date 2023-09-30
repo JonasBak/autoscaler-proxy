@@ -36,7 +36,7 @@ func CreateCloudInitFile(template map[string]interface{}, opts AutoscalerOpts, s
 	variables["SERVER_RSA_PUBLIC"] = string(pubkeyBytes)
 	variables["AUTOSCALER_AUTHORIZED_KEY"] = string(authorizedKeyBytes)
 
-	config := utils.BuildTemplate(utils.TemplateMap(variables), template)
+	config := utils.BuildTemplate(utils.WithEnvMap(utils.TemplateMap(variables)), template)
 
 	d, err := yaml.Marshal(&config)
 

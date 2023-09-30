@@ -1,0 +1,12 @@
+listen_addr:
+  127.0.0.1:8081:
+    net: unix
+    addr: /var/run/docker.sock
+    name: docker
+procs:
+  env:
+    GITEA_INSTANCE: "${env.GITEA_INSTANCE}"
+    GITEA_TOKEN: "${env.GITEA_TOKEN}"
+    DOCKER_HOST: "tcp://${autoscaler.listen.docker}"
+  run:
+    - test -f .runner || act_runner register --instance $GITEA_INSTANCE --token $GITEA_TOKEN --no-interactive; act_runner daemon

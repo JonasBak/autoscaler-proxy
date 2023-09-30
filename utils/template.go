@@ -1,8 +1,10 @@
 package utils
 
 import (
+	"os"
 	"reflect"
 	"regexp"
+	"strings"
 )
 
 var re = regexp.MustCompile(`\${.+?}`)
@@ -57,5 +59,15 @@ func TemplateMap(m map[string]string) TemplateFunc {
 			return nil
 		}
 		return &v
+	}
+}
+
+func WithEnvMap(f TemplateFunc) TemplateFunc {
+	return func(key string) *string {
+		if strings.HasPrefix(key, "env.") {
+			v := os.Getenv(key[4:])
+			return &v
+		}
+		return f(key)
 	}
 }

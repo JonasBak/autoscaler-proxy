@@ -1,6 +1,8 @@
+Dockerfile
+.git
 autoscaler-proxy
 cloud-init.yml
 dev.env
-/config.yml
+config.yml
 variables.yml
 TODO

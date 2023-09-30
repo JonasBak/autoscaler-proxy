@@ -21,6 +21,10 @@ func main() {
 		}
 		config = c
 	}
+	if config.Autoscaler.HCloudToken == "" {
+		config.Autoscaler.HCloudToken = os.Getenv("HCLOUD_TOKEN")
+	}
+
 	p := proxy.New(config)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -29,7 +33,7 @@ func main() {
 
 	go func() {
 		c := make(chan os.Signal, 1)
-		signal.Notify(c, os.Kill, syscall.SIGTERM)
+		signal.Notify(c, syscall.SIGTERM)
 		<-c
 		log.Warn("Killing...")
 		p.Kill()

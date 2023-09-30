@@ -8,6 +8,7 @@ import (
 	"time"
 
 	as "github.com/JonasBak/autoscaler-proxy/autoscaler"
+	"github.com/JonasBak/autoscaler-proxy/procs"
 	"github.com/JonasBak/autoscaler-proxy/utils"
 )
 
@@ -21,11 +22,13 @@ type newConnectionCallback struct {
 type ProxyOpts struct {
 	Autoscaler as.AutoscalerOpts          `yaml:"autoscaler"`
 	ListenAddr map[string]as.UpstreamOpts `yaml:"listen_addr"`
+	Procs      procs.ProcsOpts            `yaml:"procs"`
 }
 
 type Proxy struct {
 	as         as.Autoscaler
 	listenAddr map[string]as.UpstreamOpts
+	procs      procs.Procs
 	// Used to keep track of ongoing connections, and wait for them to close when
 	// stopping the proxy.
 	wg *sync.WaitGroup
@@ -35,6 +38,7 @@ func New(opts ProxyOpts) Proxy {
 	return Proxy{
 		as:         as.New(opts.Autoscaler),
 		listenAddr: opts.ListenAddr,
+		procs:      procs.New(opts.Procs),
 		wg:         &sync.WaitGroup{},
 	}
 }
@@ -125,7 +129,7 @@ func (p Proxy) Start(ctx context.Context) error {
 
 	newConns := make(chan newConnectionCallback)
 
-	for addr, _ := range p.listenAddr {
+	for addr := range p.listenAddr {
 		addr := addr
 		// Keep track of each listener goroutine
 		p.wg.Add(1)
@@ -134,6 +138,8 @@ func (p Proxy) Start(ctx context.Context) error {
 			p.acceptIncoming(ctx, addr, newConns)
 		}()
 	}
+
+	p.procs.Run()
 
 LOOP:
 	for {
@@ -164,6 +170,9 @@ LOOP:
 func (p Proxy) Stop() {
 	log.Debug("Stopping proxy...")
 
+	log.Debug("Stopping procs")
+	p.procs.Shutdown()
+
 	log.Debug("Waiting for all requests to finish")
 	p.wg.Wait()
 
@@ -176,6 +185,9 @@ func (p Proxy) Stop() {
 // Forcefully kill the proxy and autoscaler
 func (p Proxy) Kill() {
 	log.Debug("Killing proxy...")
+
+	log.Debug("Killing procs")
+	p.procs.Kill()
 
 	log.Debug("Killing autoscaler")
 	p.as.Kill()

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"sync"
 	"time"
 
 	"github.com/JonasBak/autoscaler-proxy/utils"
@@ -15,8 +14,9 @@ import (
 var log = utils.Logger().WithField("pkg", "autoscaler")
 
 type UpstreamOpts struct {
-	Net  string `yaml:"net"`
-	Addr string `yaml:"addr"`
+	Net  string  `yaml:"net"`
+	Addr string  `yaml:"addr"`
+	Name *string `yaml:"name"`
 }
 
 type AutoscalerOpts struct {
@@ -73,7 +73,6 @@ func serverOptions(client *hcloud.Client, opts AutoscalerOpts, cloudInit string)
 
 type Autoscaler struct {
 	client     *hcloud.Client
-	mx         *sync.Mutex
 	server     *hcloud.Server
 	serverOpts hcloud.ServerCreateOpts
 
@@ -111,7 +110,6 @@ func New(opts AutoscalerOpts) Autoscaler {
 	serverOpts := serverOptions(client, opts, cloudInit)
 
 	as := Autoscaler{
-		mx:                new(sync.Mutex),
 		client:            client,
 		serverOpts:        serverOpts,
 		sshClient:         sshClient,
@@ -183,9 +181,6 @@ func (as *Autoscaler) evaluateScaledown(ctx context.Context) error {
 		return nil
 	}
 
-	as.mx.Lock()
-	defer as.mx.Unlock()
-
 	timeSinceLastInteraction := time.Now().Sub(as.lastInteraction)
 
 	log.WithField("time_since_last_interaction", timeSinceLastInteraction.String()).Debug("Evaluating scaledown")
@@ -203,8 +198,6 @@ func (as *Autoscaler) evaluateScaledown(ctx context.Context) error {
 // other should use EnsureOnline.
 func (as *Autoscaler) ensureOnline(ctx context.Context) error {
 	log.Debug("Making sure server is online")
-	as.mx.Lock()
-	defer as.mx.Unlock()
 
 	as.lastInteraction = time.Now()
 
@@ -297,8 +290,6 @@ LOOP:
 			}
 			break
 		case c := <-as.cShutdown:
-			as.mx.Lock()
-			defer as.mx.Unlock()
 			c <- as.deleteServer()
 			break LOOP
 		}
