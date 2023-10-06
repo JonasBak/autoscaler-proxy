@@ -2,6 +2,7 @@ package procs
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"github.com/JonasBak/autoscaler-proxy/utils"
 	"io"
@@ -51,7 +52,7 @@ func New(opts ProcsOpts) Procs {
 	}
 }
 
-func (p Procs) Run() {
+func (p Procs) Run(ctx context.Context) {
 	for _, proc := range p.procs {
 		proc := proc
 
@@ -92,7 +93,8 @@ func (p Procs) Run() {
 			log.Info("running command")
 			err = proc.p.Run()
 			if err != nil {
-				log.WithError(err).Warn("command exited with error")
+				log.WithError(err).Error("command exited with error")
+				ctx.Value("fatal").(chan struct{}) <- struct{}{}
 			}
 		}()
 	}

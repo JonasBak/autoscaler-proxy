@@ -139,7 +139,7 @@ func (p Proxy) Start(ctx context.Context) error {
 		}()
 	}
 
-	p.procs.Run()
+	p.procs.Run(ctx)
 
 LOOP:
 	for {

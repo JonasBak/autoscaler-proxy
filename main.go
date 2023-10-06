@@ -27,7 +27,10 @@ func main() {
 
 	p := proxy.New(config)
 
+	fatal := make(chan struct{}, 1)
+
 	ctx, cancel := context.WithCancel(context.Background())
+	ctx = context.WithValue(ctx, "fatal", fatal)
 
 	go p.Start(ctx)
 
@@ -45,6 +48,13 @@ func main() {
 	signal.Notify(c, os.Interrupt)
 
 	select {
+	case <-fatal:
+		log.Warn("Fatal error received, shutting down...")
+		cancel()
+		p.Stop()
+		log.Debug("Stopped")
+		os.Exit(1)
+		break
 	case <-c:
 		log.Warn("Shutting down...")
 		cancel()
