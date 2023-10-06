@@ -4,7 +4,7 @@ import (
 	"fmt"
 
 	"github.com/JonasBak/autoscaler-proxy/utils"
-	"go.mozilla.org/sops/v3/decrypt"
+	"github.com/getsops/sops/v3/decrypt"
 	"golang.org/x/crypto/ssh"
 	"gopkg.in/yaml.v3"
 )
